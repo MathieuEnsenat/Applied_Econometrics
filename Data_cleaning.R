@@ -64,4 +64,4 @@ base_regression <- df_final %>%
   )
 head(base_regression)
 
-write_csv(file = "Final_data",base_regression)
+write_csv(file = "Final_data.csv",base_regression)
