@@ -1,0 +1,449 @@
+---
+title: "Lab session 2 -- forecasting French GDP growth (a first pass)"
+author: "Loïc Batté -- Toulouse School of Economics"
+date: M1 Applied Econometrics -- Time Series Econometrics -- year 2025-2026
+output:
+  html_document:
+    theme: default
+    highlight: espresso
+    toc: yes
+    toc_float: true
+    keep_md: yes
+    number_sections: true
+    fig_width: 8.5
+    fig_height: 3.5
+    tufte: tufte_html
+  pdf_document: 
+    toc: no
+    keep_tex: yes
+    number_sections: true
+    fig_width: 8.5
+    fig_height: 3.5
+fontsize: 11pt
+# bibliography: references.bib  
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r Knitr_Global_Options, include=FALSE, cache=FALSE}
+library(knitr)
+opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE,
+               autodep = TRUE, tidy = FALSE, cache = TRUE)
+```
+
+<!-- ------------------------------------------------------------------------ -->
+
+**Contents**
+
+- An example of what you can do with Rmarkdown
+- A way to download French yearly GDP time series
+- First steps of the analysis: descriptive statistics
+- Stationarity test
+- Model specification
+- Estimation and diagnostics
+- Forecasting
+
+------------------------------------------------------------------------
+
+This HTML page was generated using Rmarkdown, a powerful tool for
+integrating maths (using $\LaTeX$ syntax), standard text, graphs, R code
+and its output, into a good-looking report (in PDF or HTML). It is an
+important tool of the R ecosystem, as well as an interesting alternative
+to Jupyter notebooks. For more details, see its web page:
+<https://rmarkdown.rstudio.com/>
+
+# DB.nomics
+
+DB.nomics is a platform that aggregates open access economic data (and
+much more: energy data, population data...) from many sources:
+<https://db.nomics.world/>
+
+We will use a R package called rdbnomics, that allows us to download
+data by identifier directly from your R code. A good alternative is
+pdfetch (<https://cran.r-project.org/web/packages/pdfetch/index.html>).
+Alternatives exist, such as the download.file function; the more
+ambitious ones can also crawl a website to scrape together an original
+data set...
+
+In this report, I will download yearly data on French real GDP (base
+year 2010), as provided by Eurostat, the European statistical agency,
+and real GDP at 2020 reference levels from AMECO.[^1] AMECO is the
+annual macro-economic database of the European Commission's Directorate
+General for Economic and Financial Affairs. Quoting its frontpage on the
+web
+(<https://economy-finance.ec.europa.eu/economic-research-and-databases/economic-databases/ameco-database_en>):
+"The database contains data for the EU, the euro area, EU Member States,
+candidate countries and other OECD countries, for a total of over 40
+countries. Data is organized in eighteen chapters, from population and
+employment via main national accounts aggregates such as gross domestic
+product to sector accounts and the cyclical adjustment of public finance
+variables."
+
+[^1]: Of course, the series are not identical, since in what case 2010
+    prices are used, and in the other case 2020 price levels are used,
+    to build GDP in volumes.
+
+# Time-series related packages in R
+
+This page contains lots of references to R packages that are related to
+time series: <https://cran.r-project.org/web/views/TimeSeries.html>. The
+page is curated by the authors of some of these packages, that strive to
+keep it up to date. A great feature is that this page regroups packages
+based on what one may want to do. It is a great way to start if you have
+no idea how to implement a given class of tests or models!
+
+In what follows, I will load several of these packages. Note that some
+packages introduce the same functions, and sometimes they are just
+wrap-arounds of the stats package from the base distribution. In your
+project, you are advised to stick to a small number of packages to avoid
+clashes: if you don't, you run a risk that two packages will try to
+overwrite the same function from the base distribution, that these
+versions will not be compatible to other functions or methods, resulting
+in errors that you will have a hard time to debug. To clarify my method
+here, the aim of introducing different packages is to give you an
+overview of what is available, and to identify some tools that might be
+useful to you.
+
+You can also check the more general page on econometrics, which can be
+useful for any kind of applied econometrics project (not only time
+series): <https://cran.r-project.org/web/views/Econometrics.html>
+
+Alongside packages, these pages contain data sets that you may want to
+explore. Keep in mind that these data sets are not very original, and
+that you had better find (or build) the data set that best suits the
+economic question you are asking yourselves. **Start your project from
+the economic question, not from the data set!**
+
+# Downloading French GDP data
+
+```{r Load GDP from DBnomics }
+library(rdbnomics)
+library(tidyverse)
+
+# fpp3 library, unused for this report
+# library(fpp3)
+
+# Time disaggregation library, unused 
+# library(td)
+
+# Data source from the AMECO database, French real GDP at 2020 reference levels
+gdp_AMECO <- rdb(ids="AMECO/OVGD/FRA.1.1.0.0.OVGD")
+
+# Alternative data source from Eurostat, real French GDP at 2010 reference levels
+gdp <- rdb(ids="Eurostat/nama_10_gdp/A.CLV10_MEUR.B1GQ.FR")
+```
+
+The R code chunk above downloads real GDP at 2010 reference levels from
+Eurostat, as well as real GDP at 2020 reference levels from AMECO. This
+allows me to introduce some standardized macro time series identifiers
+(example "Eurostat/nama_10_gdp/A.CLV10_MEUR.B1GQ.FR") :
+
+- A means annual
+- CLV10 means "chain linked volumes, base 2010"
+- MEUR : million euro
+- B1GQ : code in national accounts nomenclature for GDP evaluated at
+  market prices
+- FR is for France
+
+Here is a screenshot of the data selection page, where I have applied
+successive filters to obtain the time series from AMECO:
+![Image](screenshot-PIB_France-AMECO-dbnomics.png) By browsing on
+DB.nomics webpages, you can find the macro time series you want, then
+copy-paste its identifier to download the data directly from your R
+code. This is an essential step for reproducibility!
+
+# Graphical representations and descriptive statistics
+
+Let us first represent our series in level, its logarithm and its growth
+rate (approximated by the first difference of its log). Looking at the
+log, one can spot the structural break in the data: the French economy
+will never be the same after the mid 70s. From the point of view of
+French economic history, this marks the end of the "Trente glorieuses"
+(1945-1975). France is far from unique here: at the international level,
+the aftermath of the first oil shock (1973) and second oil shock (1979)
+is characterized by persistent, high inflation, high unemployment and
+sluggish growth (stagflation).
+
+```{r Graphs GDP}
+library(ggplot2)
+
+# Get a tidy dataframe for GDP values called gdp2 
+# The name is gdp2 for no specific reason other than there used to be a gdp1 series in my code :)
+gdp2 <- data.frame(period = gdp_AMECO$period, value = gdp_AMECO$value)
+
+# Column for the log of GDP
+gdp2$log_value <- log(gdp2$value)
+
+# Column for the growth rate of GDP in %, as approximated by Delta ln Y
+# Careful: the series in difference does not exist for 1960, since we don't have the value for 1959
+# We are adding a NA value in 1960, so that all the series fit together in the same dataframe
+gdp2$growth_rate <- c(NA, diff(gdp2$log_value) * 100)
+
+# Plot GDP in levels
+ggplot(gdp2, aes(x = period, y = value)) +
+  geom_line(color = "blue") +
+  labs(title = "French GDP in levels (base year 2020))", x = "Year", y = "Million euros")
+
+# Plot GDP in log
+ggplot(gdp2, aes(x = period, y = log_value)) +
+  geom_line(color = "red") +
+  labs(title = "Log of GDP", x = "Year", y = "log(PIB)")
+
+# Plot annual growth rate in percentage points
+ggplot(gdp2, aes(x = period, y = growth_rate)) +
+  geom_line(color = "black") +
+  geom_hline(yintercept = 0, color = "black", linetype = "dashed", linewidth = 0.5) + 
+# Line above adds a horizontal line at 0% growth rate, as a visual aid
+  labs(title = "Annual growth rate, French GDP", x = "Year", y = "%")
+```
+
+Let us get some descriptive statistics about the growth rate of French
+GDP, as well as a density plot and three additional standardized moments
+(variance, skewness and kurtosis):
+
+```{r Descriptive stats for the growth rate}
+library(TSA)
+library(astsa)
+
+# Descriptive statistics
+summary(gdp2$growth_rate, na.rm=TRUE)
+
+#Graph the density
+ggplot(gdp2) +
+  aes(x = growth_rate) +
+  geom_density()
+
+# Moments
+library(moments)
+var(gdp2$growth_rate,na.rm=TRUE)
+skewness(gdp2$growth_rate, na.rm=TRUE)
+kurtosis(gdp2$growth_rate, na.rm=TRUE)
+```
+
+Here I'm computing or graphing many different things, that are not super
+useful in this study so I won't comment them. But as this section
+corresponds to exploratory data analysis, I leave here some functions
+that might be useful depending on your use case. This may sound trivial,
+but **in exploratory data analysis, you have to explore!** Sometimes you
+will find something troubling or revealing in the data that will be
+worth investigating, even though it didn't originally correspond to your
+research question. Keep your eyes open!
+
+# Stationarity tests
+
+Next we study the stationarity of the logarithm of GDP. The
+autocorrelogram alone suggests long time persistence of the series, and
+warrants a stationarity test.
+
+```{r Stationarity of log}
+library(astsa)
+aux <- acf2(gdp2$log_value, main = "Autocorrelation and partial autocorrelation of log(Y)")
+
+library(tseries)
+library(urca)
+test.df <- ur.df(gdp2$log_value, lags=2)
+summary(test.df)
+```
+
+Here we use the Augmented Dickey-Fuller test. The null hypothesis of a
+unit root cannot be rejected. The series in log is not stationary. Of
+course, we already knew that GDP has a trend, so that its time series
+could not possibly be stationary. The decomposition between trend and
+cycle is something that we don't tackle here: we are doing a pure
+forecasting exercise, without any causal interpretation. If your
+research project involves the study of the business cycle, you will not
+escape spending time on the trend-cycle decomposition...
+
+# Model specification
+
+Here, we will go ahead and try to get a model for the growth rate of GDP
+($\Delta \ln Y_t \approx g_{Y,t}$).
+
+Let us now get the autocorrelograms of the growth rate of GDP. We also
+test the growth rate for stationarity.
+
+```{r Stationarity of the growth rate}
+test.df.gr <- ur.df(gdp2$growth_rate[-1], lags=2)
+summary(test.df.gr)
+
+library(astsa)
+aux2 <- acf2(gdp2$growth_rate, main = "Autocorrelation and partial autocorrelation of GDP growth rate")
+```
+
+The ADF test rejects the null hypothesis that $g_Y$ has a unit root at
+the 5% significance level, but not at the 1% significance level.
+Remember that the small sample size means this type of tests are
+unreliable anyway.
+
+Here, the autocorrelation decays slowly as we move up the orders, while
+the partial autocorrelogram suggests the first order is highly
+significant, and the second and third order almost so. This will suggest
+specifying the model as an autoregressive model, with orders between 1
+and 3. Recall the general formulation of an AR(p) process:
+$$y_t = c + \rho_1 y_{t-1} + \rho_2 y_{t-2} + \dots \rho_1 y_{t-p} +\epsilon_t  $$
+
+# Estimation and diagnostics
+
+## Estimating an AR(2) model
+
+Let us try to estimate an AR(2) model for the growth rate of GDP. A more
+complete analysis would require you to also estimate an AR(1) and an
+AR(3), of course!
+
+```{r Build an xts time series object from the growth rate of GDP, then fit an AR(2) model}
+library(xts)
+xts_gdp <- xts(gdp2$growth_rate, order.by = gdp2$period)
+
+# Here we get rid of the 1st line, which is NA, and the last one which is a forecast for 2026 (not actual observation data)
+xts_gdp <- xts_gdp[-c(1,nrow(xts_gdp)),]
+#tail(xts_gdp)
+#head(xts_gdp)
+
+library(forecast)
+#xts_gdp %>%
+#  Arima(order=c(2,0,0)) %>%
+#  forecast(h=3) %>%
+#  autoplot
+ar2_gdp <- xts_gdp %>%
+  Arima(order=c(2,0,0))
+summary(ar2_gdp)
+
+# Check whether the inverse of AR roots are within the unit circle (additional check for stationarity)
+#autoplot(ar2_gdp)
+
+# Other way of presenting some results of the regression
+# library(pander)
+# pander(ar2_gdp,style="rmarkdown")
+
+# Add the residuals and fitted values of the AR(2) model to the original dataset
+res_ar2 <- residuals(ar2_gdp)
+fitted_ar2 <- fitted(ar2_gdp)
+
+# Extract the values from the xts object
+resid_values <- as.numeric(res_ar2)
+fitted_values <- as.numeric(fitted_ar2)
+
+# Create vectors with NA in the first and last positions
+col_resid <- c(NA, resid_values, NA)
+col_fitted <- c(NA, fitted_values, NA)
+
+# Add the new vectors as columns to gdp2
+gdp2$resid_ar2_gr <- col_resid
+gdp2$fitted_ar2_gr <- col_fitted
+#head(gdp2)
+
+
+# Plot actual growth rate and fitted values
+ggplot(gdp2, aes(x = period)) +
+  geom_line(aes(y = growth_rate, color = "Actual Growth Rate"), linewidth = 1) +
+  geom_line(aes(y = fitted_ar2_gr, color = "Fitted AR(2) Growth Rate"), linewidth = 1) +
+  labs(
+    title = "Comparison of Actual and Fitted Growth Rates",
+    x = "Period",
+    y = "Growth Rate",
+    color = "Legend"
+  ) +
+  scale_color_manual(values = c("Actual Growth Rate" = "blue", "Fitted AR(2) Growth Rate" = "red")) +
+  theme_minimal()
+
+```
+
+As can be expected, the fitted AR(2) model makes large mistakes whenever
+the growth rate varies unexpectedly.
+
+## Model diagnostics
+
+Let us perform some checks on the residuals. The firs step is to plot
+them.
+
+```{r Model diagnostics for the AR(2)}
+
+# Plot actual growth rate and fitted values
+ggplot(gdp2, aes(x = period)) +
+  geom_point(aes(y = resid_ar2_gr, color = "Residuals")) +
+  labs(
+    title = "Residuals of the AR(2) estimation",
+    x = "Period",
+    y = "Residuals",
+    color = "Legend"
+  ) +
+  scale_color_manual(values = c("Residuals" = "blue")) +
+  theme_minimal()
+
+# The following code used to look at a subset of the data
+subset_gdp2 <- gdp2 %>% mutate(year = year(period)) %>%  # Extract the year from the date
+  filter(year >= 1970 & year <= 1980)
+```
+
+Looking at the residuals, it appears that there are 4 clear outliers
+(1975, 2009, and of course 2020 and 2021). Residuals also look
+autocorrelated (in particular they do not alternate between positive and
+negative values as you would expect from a white noise). Determining
+whether they are normal or homoskedastic with eyes only is really hard,
+especially for such a small sample.
+
+Ideally, we would like to be confident in the fact that the residuals
+are pure innovations, that is are white noise. To do so, let us perform
+tests for absence of autocorrelation, normality, heteroskedasticity.
+
+```{r Test on the residuals for the AR(2)}
+
+library(FinTS)
+
+#Ljung-Box test for autocorrelation
+ljung_box_result <- Box.test(gdp2$resid_ar2, type = "Ljung-Box", lag = 10, fitdf=2)
+print(ljung_box_result)
+
+auxx <- acf2(gdp2$resid_ar2_gr, main = "Autocorrelation and partial autocorrelation of the residuals")
+
+# Shapiro-Wilk test for normality, better than Jarque-Bera on small sample
+shapiro_result <- shapiro.test(gdp2$resid_ar2)
+print(shapiro_result)
+
+# Tests for heteroskedasticity
+
+# Test for autocorrelation in the squares of the residuals
+ljung_box_squares_residuals_arch <- Box.test(gdp2$resid_ar2_gr^2,lag=5,type="Ljung-Box",fitdf=2)
+print(ljung_box_squares_residuals_arch)
+
+# LM test for heteroskedasticity
+arch_result <- ArchTest(gdp2$resid_ar2)
+print(arch_result)
+
+
+```
+
+The Ljung-Box test fails to reject the null hypothesis of no
+autocorrelation up to order 10. This is confirmed by plotting the
+autocorrelogram and partial autocorrelogram of the residuals.
+
+The Shapiro-Wilk test strongly rejects the null hypothesis of normality.
+
+Concerning the tests of heteroskedasticity: the Ljung-Box test on the
+squares of residuals rejects at the 10% significance level the null
+hypothesis that there is no autocorrelation on the squares of residuals,
+which is inconclusive. The ARCH LM-test rejects the absence of
+heteroskedasticity.
+
+Here is a more concise command to graphically check residuals
+
+```{r Other checks for residuals}
+checkresiduals(ar2_gdp)
+
+#library(randtests)
+#Randomness test
+#runs.test(residuals(ar2_gdp))
+```
+
+# Forecasting
+
+Below is a 3-period-ahead forecast of the French growth rate (for
+2026,2027 and 2028) using the AR(2) model we have estimated. The central
+forecast is represented along with confidence bands.
+
+```{r Forecast the growth rate of GDP using an AR(2) model}
+ar2_gdp %>%
+  forecast(h=3) %>%
+  autoplot
+```
